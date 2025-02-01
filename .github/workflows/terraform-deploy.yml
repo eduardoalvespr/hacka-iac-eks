@@ -1,0 +1,64 @@
+name: Terraform Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGION_DEFAULT: "us-east-1"
+  BUCKET_NAME: "terraform-state-hackaton"
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.REGION_DEFAULT }}
+
+      - name: Create S3 Bucket
+        id: create-bucket
+        run: |
+          BUCKET_NAME=${{ env.BUCKET_NAME }}
+          REGION=${{ env.REGION_DEFAULT }}
+  
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "Bucket $BUCKET_NAME já existe."
+          else
+            aws s3api create-bucket \
+              --bucket "$BUCKET_NAME" \
+              --region "$REGION" \
+              $( [ "$REGION" != "us-east-1" ] && echo "--create-bucket-configuration LocationConstraint=$REGION" )
+  
+            aws s3api put-bucket-versioning \
+              --bucket "$BUCKET_NAME" \
+              --versioning-configuration Status=Enabled
+  
+            echo "Bucket $BUCKET_NAME criado com sucesso."
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=terraform-state-hackaton" \
+            -backend-config="key=terraform-kube/terraform.tfstate" 
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+        
